@@ -1,5 +1,6 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # Show title and description.
 st.title("💬 Chatbot")
@@ -17,10 +18,8 @@ if not gemini_api_key:
     st.info("Please add your Gemini API key to continue.", icon="🗝️")
 else:
 
-    # Configure Gemini API with trimmed key.
-    api_key = gemini_api_key.strip()
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-3.8-flash")
+    # Create a Gemini client.
+    client = genai.Client(api_key=gemini_api_key)
 
     # Create a session state variable to store the chat messages. This ensures that the
     # messages persist across reruns.
@@ -41,33 +40,29 @@ else:
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Convert chat history for Gemini API.
-        gemini_messages = [
-            {
-                "role": "user" if m["role"] == "user" else "model",
-                "parts": [m["content"]],
-            }
+        # Convert session messages to Gemini's expected format (assistant -> model).
+        contents = [
+            types.Content(
+                role="model" if m["role"] == "assistant" else "user",
+                parts=[types.Part.from_text(text=m["content"])],
+            )
             for m in st.session_state.messages
         ]
 
         # Generate a response using the Gemini API.
-        try:
-            stream = model.generate_content(gemini_messages, stream=True)
+        stream = client.models.generate_content_stream(
+            model="gemini-2.5-flash",
+            contents=contents,
+        )
 
-            def stream_generator():
-                for chunk in stream:
-                    if chunk.text:
-                        yield chunk.text
+        # Generator to extract text chunks for `st.write_stream`.
+        def stream_text():
+            for chunk in stream:
+                if chunk.text:
+                    yield chunk.text
 
-            # Stream the response to the chat using `st.write_stream`, then store it in 
-            # session state.
-            with st.chat_message("assistant"):
-                response = st.write_stream(stream_generator)
-            st.session_state.messages.append({"role": "assistant", "content": response})
-        except Exception as e:
-            st.error(f"Error generating response (gemini-3.8-flash): {e}")
-            st.info(
-                "If you receive a 404 (NotFound) error, please check:\n"
-                "1. Your API key was obtained from Google AI Studio (https://aistudio.google.com/app/apikey).\n"
-                "2. Ensure your account has access to the gemini-3.8-flash model."
-            )
+        # Stream the response to the chat using `st.write_stream`, then store it in
+        # session state.
+        with st.chat_message("assistant"):
+            response = st.write_stream(stream_text())
+        st.session_state.messages.append({"role": "assistant", "content": response})
